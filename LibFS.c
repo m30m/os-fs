@@ -172,6 +172,24 @@ void test_single_sector() {
     assert(test[1] == 's');
 }
 
+void test_read_write_seek() {
+    File_Create("/test");
+    int fd = File_Open("/test");
+    char str[] = "salam bar to";
+    File_Write(fd, str, sizeof(str));
+    File_Close(fd);
+    fd = File_Open("/test");
+    char buff[15];
+    File_Read(fd, buff, 5);
+    buff[5] = '\0';
+    assert(strcmp(buff, "salam") == 0);
+    File_Seek(fd, 0);
+    File_Read(fd, buff, 5);
+    assert(strcmp(buff, "salam") == 0);
+    assert(File_Read(fd, buff, 100) == 8);
+    assert(strcmp(buff, " bar to") == 0);
+}
+
 void test_bitmap_inode() {
     set_inode_bitmap(10, 1);
     set_inode_bitmap(11, 1);
@@ -203,6 +221,22 @@ void test_file_folder_create() {//None of them should exists before
     assert(File_Create(tmp2) == -1);
     assert(Dir_Create(tmp3) == 0);
     assert(File_Create(tmp2) == 0);
+}
+
+void test_open_file() {
+    File_Create("/file1");
+    Dir_Create("/path2");
+    File_Create("/file3");
+    File_Create("/path2/1");
+    File_Create("/path2/2");
+    File_Create("/path2/3");
+    File_Create("/path2/4");
+    File_Create("/path2/5");
+    assert(File_Open("/file3") == 0);
+    assert(File_Open("/file3") == 1);
+    assert(File_Open("/file3") == 2);
+    File_Open("/file_dani");
+    File_Open("/path2");
 }
 
 void test_dir_count() {
@@ -504,6 +538,14 @@ File_Open(char *file) {
             for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
                 memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
                 if (strcmp(tmp_file_record->name, tmp_path) == 0) {
+
+                    struct inode *tmp_inode = calloc(1, sizeof(struct inode));
+                    read_inode(tmp_file_record->inode_number, tmp_inode);
+                    if (tmp_inode->type == DIR_TYPE) {
+                        fprintf(stderr, "Can't open dir\n");
+                        osErrno = E_NO_SUCH_FILE;
+                        return -1;
+                    }
                     int fd = get_new_fd();
                     file_descriptors[fd].inode_number = tmp_file_record->inode_number;
                     file_descriptors[fd].pointer = 0;
@@ -514,42 +556,113 @@ File_Open(char *file) {
             }
         }
     }
+    fprintf(stderr, "No such file to open\n");
     osErrno = E_NO_SUCH_FILE;
     return -1;
 }
 
 
 int
-File_Read(int fd, void *buffer, int size) {
+File_Read(int fd_num, void *buffer, int size) {
     printf("FS_Read\n");
-    //error handling
-    // read  the inode (inode is in fd)
-    // find which data block from fd pointer
-    // read the data blocks until size
-    // maybe more than one data block needed
-    //delete the inode from ram
-    return 0;
+    struct file_descriptor *fd = &file_descriptors[fd_num];
+    if (fd->inode_number == 0) {
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+    struct inode *node = calloc(1, sizeof(struct inode));
+    read_inode(fd->inode_number, node);
+
+    int block_number = fd->pointer / SECTOR_SIZE;
+    int block_offset = fd->pointer % SECTOR_SIZE;
+    int actual_size = size;
+    if (fd->pointer + size > node->size)
+        actual_size = node->size - fd->pointer;
+
+    int read_left = actual_size;
+    int read_done = 0;
+    while (read_left > 0) {
+        int read_amount = read_left;
+        if (read_amount > SECTOR_SIZE - block_offset)
+            read_amount = SECTOR_SIZE - block_offset;
+        read_from_single_sector(node->data_blocks[block_number], block_offset, &buffer[read_done], read_amount);
+        block_number++;
+        block_offset = 0;
+        read_left -= read_amount;
+        read_done += read_amount;
+    }
+    fd->pointer += actual_size;
+    free(node);
+    return read_done;
 }
 
 int
-File_Write(int fd, void *buffer, int size) {
+File_Write(int fd_num, void *buffer, int size) {
     printf("FS_Write\n");
-    //error handling
-    // read  the inode (inode is in fd)
-    // find the size limit and set error if needed
-    // find which data block from fd pointer
-    // write the data blocks until size
-    // error handle
-    // maybe more than one data block needed
-    //delete the inode from ram
+    struct file_descriptor *fd = &file_descriptors[fd_num];
+    if (fd->inode_number == 0) {
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+    struct inode *node = calloc(1, sizeof(struct inode));
+    read_inode(fd->inode_number, node);
+
+    int block_number = fd->pointer / SECTOR_SIZE;
+    int block_offset = fd->pointer % SECTOR_SIZE;
+
+    int write_left = size;
+    int write_done = 0;
+    while (write_left > 0) {
+        if (block_number == DATA_BLOCK_PER_INODE) {
+            fprintf(stderr, "No more blocks left in inode\n");
+            osErrno = E_NO_SPACE;
+            return -1;
+        }
+        if (node->data_blocks[block_number] == 0)//allocate new block
+        {
+            int new_sector_number = get_new_block();
+            if (new_sector_number == -1) {
+                fprintf(stderr, "No space left on device for more writing\n");
+                osErrno = E_NO_SPACE;
+                return -1;
+            }
+            node->data_blocks[block_number] = new_sector_number;
+        }
+        int write_amount = write_left;
+        if (write_left > SECTOR_SIZE - block_offset)
+            write_amount = SECTOR_SIZE - block_offset;
+        write_to_single_sector(node->data_blocks[block_number], block_offset, &buffer[write_done], write_amount);
+        write_done += write_amount;
+        write_left -= write_amount;
+        block_number++;
+        block_offset = 0;
+        if (node->size < fd->pointer + write_done) {
+            node->size = fd->pointer + write_done;
+            write_inode(fd->inode_number, node);
+        }
+    }
+    fd->pointer += write_done;
+    free(node);
     return 0;
 }
 
 int
-File_Seek(int fd, int offset) {
+File_Seek(int fd_num, int offset) {
     printf("FS_Seek\n");
-    //seekdir
-    return 0;
+    struct file_descriptor *fd = &file_descriptors[fd_num];
+    if (fd->inode_number == 0) {
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+    struct inode *node = calloc(1, sizeof(struct inode));
+    read_inode(fd->inode_number, node);
+    if (offset < 0 || offset > node->size) {
+        fprintf(stderr, "Seek position out of bound");
+        osErrno = E_SEEK_OUT_OF_BOUNDS;
+        return -1;
+    }
+    fd->pointer = offset;
+    return fd->pointer;
 }
 
 int
