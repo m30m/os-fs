@@ -3,7 +3,6 @@
 #include "LibFS.h"
 #include "LibDisk.h"
 
-//TODO: check free before any return
 //TODO: Handle trailing /
 
 #define MAX_FILES  1000
@@ -478,6 +477,8 @@ File_Open(char *file) {
                     file_descriptors[fd].pointer = 0;
                     open_file_count++;
                     inode_open_count[tmp_file_record->inode_number]++;
+                    free(tmp);
+                    free(tmp_file_record);
                     return fd;
                 }
             }
@@ -485,6 +486,8 @@ File_Open(char *file) {
     }
     fprintf(stderr, "No such file to open\n");
     osErrno = E_NO_SUCH_FILE;
+    free(tmp);
+    free(tmp_file_record);
     return -1;
 }
 
@@ -543,6 +546,7 @@ File_Write(int fd_num, void *buffer, int size) {
         if (block_number == DATA_BLOCK_PER_INODE) {
             fprintf(stderr, "No more blocks left in inode\n");
             osErrno = E_NO_SPACE;
+            free(node);
             return -1;
         }
         if (node->data_blocks[block_number] == 0)//allocate new block
@@ -551,6 +555,7 @@ File_Write(int fd_num, void *buffer, int size) {
             if (new_sector_number == -1) {
                 fprintf(stderr, "No space left on device for more writing\n");
                 osErrno = E_NO_SPACE;
+                free(node);
                 return -1;
             }
             node->data_blocks[block_number] = new_sector_number;
@@ -586,9 +591,11 @@ File_Seek(int fd_num, int offset) {
     if (offset < 0 || offset > node->size) {
         fprintf(stderr, "Seek position out of bound");
         osErrno = E_SEEK_OUT_OF_BOUNDS;
+        free(node);
         return -1;
     }
     fd->pointer = offset;
+    free(node);
     return fd->pointer;
 }
 
@@ -627,6 +634,8 @@ Dir_Size(char *path) {
 
     if (node->type != DIR_TYPE) {
         fprintf(stderr, "Dir_Size should be used for directories\n");
+        free(tmp);
+        free(tmp_file_record);
         return -1;
     }
 
@@ -641,6 +650,8 @@ Dir_Size(char *path) {
             }
         }
     }
+    free(tmp);
+    free(tmp_file_record);
     return (int) (entry_count * sizeof(struct file_record));
 }
 
@@ -652,10 +663,15 @@ Dir_Read(char *path, void *buffer, int size) {
     inode_number = find_last_parent(path, &node);
     struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
     char *tmp = malloc(SECTOR_SIZE);
-    if (inode_number == -1)
+    if (inode_number == -1){
+        free(node);
+        free(tmp_file_record);
         return -1;
+    }
     if (Dir_Size(path) > size) {
         osErrno = E_BUFFER_TOO_SMALL;
+        free(node);
+        free(tmp_file_record);
         return -1;
     }
     int i;
@@ -674,6 +690,8 @@ Dir_Read(char *path, void *buffer, int size) {
             }
         }
     }
+    free(node);
+    free(tmp_file_record);
     return entry_count;
 }
 
@@ -695,6 +713,7 @@ int find_inode(char *file, struct inode **node) {
     start_pos++;
     if (end_pos - start_pos >= 16) {
         fprintf(stderr, "File is longer than 16 character\n");
+        free(parent);
         return -1;
     }
     char tmp_path[16];
@@ -713,11 +732,17 @@ int find_inode(char *file, struct inode **node) {
                     struct inode *new_node = calloc(1, sizeof(struct inode));
                     read_inode(tmp_file_record->inode_number, new_node);
                     (*node) = new_node;
+                    free(parent);
+                    free(tmp);
+                    free(tmp_file_record);
                     return tmp_file_record->inode_number;
                 }
             }
         }
     }
+    free(parent);
+    free(tmp);
+    free(tmp_file_record);
     return -1;
 }
 
@@ -740,6 +765,10 @@ Dir_Unlink(char *path) {
 
     if (node->type == FILE_TYPE) {
         fprintf(stderr, "Use file unlink for files\n");
+        free(parent);
+        free(node);
+        free(tmp);
+        free(tmp_file_record);
         return -1;
     }
 
@@ -754,6 +783,9 @@ Dir_Unlink(char *path) {
                 if (tmp_file_record->inode_number != 0) {
                     fprintf(stderr, "Directory is not empty\n");
                     osErrno = E_DIR_NOT_EMPTY;
+                    free(parent);
+                    free(tmp);
+                    free(tmp_file_record);
                     return -1;
                 }
 
@@ -791,6 +823,10 @@ Dir_Unlink(char *path) {
             }
         }
     }
+    free(parent);
+    free(node);
+    free(tmp);
+    free(tmp_file_record);
     return 0;
 }
 
@@ -809,15 +845,18 @@ File_Unlink(char *path) {
     }
     if (inode_open_count[inode_number] > 0) {
         osErrno = E_FILE_IN_USE;
+        free(parent);
+        free(node);
         return -1;
     }
-    char *tmp = malloc(SECTOR_SIZE);
-    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
 
     if (node->type == DIR_TYPE) {
         fprintf(stderr, "Use dir unlink for directories\n");
         return -1;
     }
+
+    char *tmp = malloc(SECTOR_SIZE);
+    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
 
     int i;
     for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
@@ -858,6 +897,10 @@ File_Unlink(char *path) {
             }
         }
     }
+    free(node);
+    free(parent);
+    free(tmp);
+    free(tmp_file_record);
     return 0;
 }
 
