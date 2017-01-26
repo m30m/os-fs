@@ -589,7 +589,7 @@ File_Seek(int fd_num, int offset) {
     struct inode *node = calloc(1, sizeof(struct inode));
     read_inode(fd->inode_number, node);
     if (offset < 0 || offset > node->size) {
-        fprintf(stderr, "Seek position out of bound");
+        fprintf(stderr, "Seek position out of bound\n");
         osErrno = E_SEEK_OUT_OF_BOUNDS;
         free(node);
         return -1;
@@ -701,7 +701,7 @@ int find_inode(char *file, struct inode **node) {
     int parent_inode_number = 0;
     parent_inode_number = find_last_parent(file, &parent);
     if (parent_inode_number == -1) {
-        fprintf(stderr, "Folder does not exists");
+        fprintf(stderr, "Folder does not exists\n");
         return -1;
     }
 
