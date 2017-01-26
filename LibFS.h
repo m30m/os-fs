@@ -43,6 +43,8 @@ int File_Seek(int fd, int offset);
 int File_Close(int fd);
 int File_Unlink(char *file);
 
+void test_all();
+
 // directory ops
 int Dir_Create(char *path);
 int Dir_Size(char *path);

@@ -19,10 +19,7 @@ main(int argc, char *argv[]) {
 
     FS_Boot(path);
     FS_Sync();
-
-
-
-    FS_Sync();
+    test_all();
     return 0;
 }
 

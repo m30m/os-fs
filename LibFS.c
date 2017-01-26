@@ -89,6 +89,33 @@ char get_inode_bitmap(int inode_number) {
     return (char) ((c >> byte_offset) & 1);
 }
 
+int get_new_block() {
+    char *tmp = malloc(SECTOR_SIZE);
+    int i;
+    for (i = 1; i < 4; i++) {
+        Disk_Read(i, tmp);
+        int j = 0;
+        if (i == 1)
+            j = 254 / 8 + 1; // First 254 sectors are metadata
+        for (; j < SECTOR_SIZE; j++) {
+            int k;
+            for (k = 0; k < 8; k++) {
+                if ((tmp[j] & (1 << k)) == 0) {
+                    tmp[j] |= (1 << k);
+                    Disk_Write(i, tmp);
+                    int sector_number = (i - 1) * SECTOR_SIZE * 8 + j * 8 + k;
+                    memset(tmp, 0, sizeof tmp);
+                    Disk_Write(sector_number, tmp);
+                    free(tmp);
+                    return sector_number;
+                }
+            }
+        }
+    }
+    free(tmp);
+    return -1;//No free blocks
+}
+
 void set_datablock_bitmap(int block_number, char value) {
     int sector = 1 + block_number / (SECTOR_SIZE * 8);
     int byte_position = (block_number % (SECTOR_SIZE * 8)) / 8;
@@ -159,140 +186,10 @@ FS_Boot(char *path) {
     return 0;
 }
 
-
-void test_dir_unlink() {
-    Dir_Create("/path2");
-    Dir_Create("/path2/path3");
-    Dir_Create("/path1");
-    File_Create("/path1/1");
-    assert(Dir_Unlink("/path1") == -1);
-    assert(Dir_Unlink("/path2") == -1);
-    assert(Dir_Unlink("/path2/path3") == 0);
-    assert(Dir_Unlink("/path2") == 0);
-    assert(Dir_Unlink("/") == -1);
-}
-
-void test_single_sector() {
-    char test[] = "test";
-    write_to_single_sector(0, 10, test, 4);
-    read_from_single_sector(0, 11, test, 2);
-    assert(test[0] == 'e');
-    assert(test[1] == 's');
-}
-
-void test_read_write_seek() {
-    File_Create("/test");
-    int fd = File_Open("/test");
-    char str[] = "salam bar to";
-    File_Write(fd, str, sizeof(str));
-    File_Close(fd);
-    fd = File_Open("/test");
-    char buff[15];
-    File_Read(fd, buff, 5);
-    buff[5] = '\0';
-    assert(strcmp(buff, "salam") == 0);
-    File_Seek(fd, 0);
-    File_Read(fd, buff, 5);
-    assert(strcmp(buff, "salam") == 0);
-    assert(File_Read(fd, buff, 100) == 8);
-    assert(strcmp(buff, " bar to") == 0);
-}
-
-void test_bitmap_inode() {
-    set_inode_bitmap(10, 1);
-    set_inode_bitmap(11, 1);
-    set_inode_bitmap(14, 0);
-    set_inode_bitmap(15, 1);
-    assert(get_inode_bitmap(10) == 1);
-    assert(get_inode_bitmap(11) == 1);
-    assert(get_inode_bitmap(14) == 0);
-    assert(get_inode_bitmap(15) == 1);
-}
-
-void test_bitmap_block() {
-    set_inode_bitmap(4564, 1);
-    set_inode_bitmap(4565, 1);
-    set_inode_bitmap(4566, 0);
-    set_inode_bitmap(4567, 1);
-    assert(get_inode_bitmap(4564) == 1);
-    assert(get_inode_bitmap(4565) == 1);
-    assert(get_inode_bitmap(4566) == 0);
-    assert(get_inode_bitmap(4567) == 1);
-}
-
-void test_file_folder_create() {//None of them should exists before
-    char tmp[] = "/path";
-    char tmp2[] = "/path2/salam";
-    char tmp3[] = "/path2";
-    assert(File_Create(tmp) == 0);
-    assert(File_Create(tmp) == -1);
-    assert(File_Create(tmp2) == -1);
-    assert(Dir_Create(tmp3) == 0);
-    assert(File_Create(tmp2) == 0);
-}
-
-void test_open_file() {
-    File_Create("/file1");
-    Dir_Create("/path2");
-    File_Create("/file3");
-    File_Create("/path2/1");
-    File_Create("/path2/2");
-    File_Create("/path2/3");
-    File_Create("/path2/4");
-    File_Create("/path2/5");
-    assert(File_Open("/file3") == 0);
-    assert(File_Open("/file3") == 1);
-    assert(File_Open("/file3") == 2);
-    File_Open("/file_dani");
-    File_Open("/path2");
-}
-
-void test_dir_count() {
-    File_Create("/file1");
-    Dir_Create("/path2");
-    File_Create("/file3");
-    File_Create("/path2/1");
-    File_Create("/path2/2");
-    File_Create("/path2/3");
-    File_Create("/path2/4");
-    File_Create("/path2/5");
-    char tmp5[1000];
-    assert(Dir_Read("/", tmp5, 1000) == 3);
-    assert(Dir_Read("/path2/", tmp5, 1000) == 5);
-}
-
-int get_new_block() {
-    char *tmp = malloc(SECTOR_SIZE);
-    int i;
-    for (i = 1; i < 4; i++) {
-        Disk_Read(i, tmp);
-        int j = 0;
-        if (i == 1)
-            j = 254 / 8 + 1; // First 254 sectors are metadata
-        for (; j < SECTOR_SIZE; j++) {
-            int k;
-            for (k = 0; k < 8; k++) {
-                if ((tmp[j] & (1 << k)) == 0) {
-                    tmp[j] |= (1 << k);
-                    Disk_Write(i, tmp);
-                    int sector_number = (i - 1) * SECTOR_SIZE * 8 + j * 8 + k;
-                    memset(tmp, 0, sizeof tmp);
-                    Disk_Write(sector_number, tmp);
-                    free(tmp);
-                    return sector_number;
-                }
-            }
-        }
-    }
-    free(tmp);
-    return -1;//No free blocks
-}
-
 int get_new_inode(struct inode **new_node) {
     //TODO:Optimize this by reading the sector once
     int i;
-    for (i = 0; i < MAX_FILES;
-         i++) {
+    for (i = 0; i < MAX_FILES; i++) {
         if (!get_inode_bitmap(i)) {
             set_inode_bitmap(i, 1);
             (*new_node) = calloc(1, sizeof(struct inode));
@@ -306,7 +203,10 @@ int get_new_inode(struct inode **new_node) {
 int
 FS_Sync() {
     printf("FS_Sync\n");
-    Disk_Save(image_path);
+    if (Disk_Save(image_path) == -1) {
+        osErrno = E_GENERAL;
+        return -1;
+    }
     return 0;
 }
 
@@ -329,16 +229,24 @@ int find_last_parent(char *file, struct inode **new_node) {
             end_pos++;
         if (file[end_pos] == '\0') {
             (*new_node) = parent;
+            free(tmp);
+            free(tmp_file_record);
             return parent_inode_number;
         }
         if (start_pos == end_pos) {
             fprintf(stderr, "Wrong format of file path\n");
             osErrno = E_CREATE;
+            free(parent);
+            free(tmp);
+            free(tmp_file_record);
             return -1;
         }
         if (end_pos - start_pos >= 16) {
             fprintf(stderr, "File is longer than 16 character\n");
             osErrno = E_CREATE;
+            free(parent);
+            free(tmp);
+            free(tmp_file_record);
             return -1;
         }
         char tmp_path[16];
@@ -361,6 +269,9 @@ int find_last_parent(char *file, struct inode **new_node) {
                             read_inode(parent_inode_number, parent);
                             if (parent->type != DIR_TYPE) {
                                 fprintf(stderr, "Expected folder but found file: %s\n", tmp_path);
+                                free(parent);
+                                free(tmp);
+                                free(tmp_file_record);
                                 return -1;
                             }
                             found_folder = 1;
@@ -372,10 +283,12 @@ int find_last_parent(char *file, struct inode **new_node) {
             }
             if (!found_folder) {
                 fprintf(stderr, "Folder %s not found\n", tmp_path);
+                free(parent);
+                free(tmp);
+                free(tmp_file_record);
                 return -1;
             }
         }
-
     }
 }
 
@@ -447,6 +360,9 @@ file_folder_create(char *file, enum INODE_TYPE type) {
                 if (new_inode_number == -1) {
                     fprintf(stderr, "No free inode available\n");
                     osErrno = E_CREATE;
+                    free(tmp);
+                    free(tmp_file_record);
+                    free(new_node);
                     return -1;
                 }
                 new_node->type = type;
@@ -458,6 +374,7 @@ file_folder_create(char *file, enum INODE_TYPE type) {
                 write_inode(parent_inode_number, parent);
                 free(tmp);
                 free(tmp_file_record);
+                free(new_node);
                 return 0;
             }
         }
@@ -552,6 +469,8 @@ File_Open(char *file) {
                     if (tmp_inode->type == DIR_TYPE) {
                         fprintf(stderr, "Can't open dir\n");
                         osErrno = E_NO_SUCH_FILE;
+                        free(tmp);
+                        free(tmp_file_record);
                         return -1;
                     }
                     int fd = get_new_fd();
@@ -687,19 +606,7 @@ File_Close(int fd) {
     return 0;
 }
 
-int
-File_Unlink(char *file) {
-    printf("FS_Unlink\n");
-    //check open_count
-    // more error handling
-    //follow the path, if not exists error
-    // delete the file from the parent directory
-    // free the inode bit map and datablocks
-    return 0;
-}
 
-
-// directory ops
 int
 Dir_Create(char *path) {
     printf("Dir_Create %s\n", path);
@@ -711,8 +618,30 @@ Dir_Create(char *path) {
 int
 Dir_Size(char *path) {
     printf("Dir_Size\n");
-    //use follow_the_path function and recurse and sum up all the sizes
-    return 0;
+    struct inode *node;
+    find_inode(path, &node);
+    int i;
+    int entry_count = 0;
+    char *tmp = malloc(SECTOR_SIZE);
+    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
+
+    if (node->type != DIR_TYPE) {
+        fprintf(stderr, "Dir_Size should be used for directories\n");
+        return -1;
+    }
+
+    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
+        if (node->data_blocks[i] != 0) {
+            Disk_Read(node->data_blocks[i], tmp);
+            int j;
+            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
+                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
+                if (tmp_file_record->inode_number != 0)
+                    entry_count++;
+            }
+        }
+    }
+    return (int) (entry_count * sizeof(struct file_record));
 }
 
 int
@@ -725,6 +654,10 @@ Dir_Read(char *path, void *buffer, int size) {
     char *tmp = malloc(SECTOR_SIZE);
     if (inode_number == -1)
         return -1;
+    if (Dir_Size(path) > size) {
+        osErrno = E_BUFFER_TOO_SMALL;
+        return -1;
+    }
     int i;
     int entry_count = 0;
     for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
@@ -734,10 +667,6 @@ Dir_Read(char *path, void *buffer, int size) {
             for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
                 memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
                 if (tmp_file_record->inode_number == 0)continue;
-                if (size - (int) sizeof(struct file_record) < 0) {
-                    osErrno = E_BUFFER_TOO_SMALL;
-                    return -1;
-                }
                 size -= (int) sizeof(struct file_record);
                 memcpy(&buffer[entry_count * sizeof(struct file_record)], &tmp[j * sizeof(struct file_record)],
                        sizeof(struct file_record));
@@ -863,4 +792,205 @@ Dir_Unlink(char *path) {
         }
     }
     return 0;
+}
+
+
+int
+File_Unlink(char *path) {
+    printf("File_Unlink\n");
+
+    struct inode *parent;
+    struct inode *node;
+    int parent_inode_number = find_last_parent(path, &parent);
+    int inode_number = find_inode(path, &node);
+    if (parent_inode_number == -1 || inode_number == -1) {
+        osErrno = E_NO_SUCH_FILE;
+        return -1;
+    }
+    if (inode_open_count[inode_number] > 0) {
+        osErrno = E_FILE_IN_USE;
+        return -1;
+    }
+    char *tmp = malloc(SECTOR_SIZE);
+    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
+
+    if (node->type == DIR_TYPE) {
+        fprintf(stderr, "Use dir unlink for directories\n");
+        return -1;
+    }
+
+    int i;
+    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
+        if (node->data_blocks[i] != 0) {
+            set_datablock_bitmap(node->data_blocks[i], 0);
+        }
+    }
+
+    set_inode_bitmap(inode_number, 0);
+
+    char found_entry_to_remove = 0;
+    for (i = 0; i < DATA_BLOCK_PER_INODE && !found_entry_to_remove; i++) {
+        if (parent->data_blocks[i] != 0) {
+            Disk_Read(parent->data_blocks[i], tmp);
+            int j;
+            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
+                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
+                if (tmp_file_record->inode_number == inode_number) {
+                    tmp_file_record->inode_number = 0;
+                    memset(tmp_file_record->name, 0, sizeof(tmp_file_record->name));
+                    memcpy(&tmp[j * sizeof(struct file_record)], tmp_file_record, sizeof(struct file_record));
+                    Disk_Write(parent->data_blocks[i], tmp);
+                    char is_whole_block_empty = 1;
+                    int k;
+                    for (k = 0; k < SECTOR_SIZE / sizeof(struct file_record); k++) {
+                        memcpy(tmp_file_record, &tmp[k * sizeof(struct file_record)], sizeof(struct file_record));
+                        if (tmp_file_record->inode_number != 0) {
+                            is_whole_block_empty = 0;
+                            break;
+                        }
+                    }
+                    if (is_whole_block_empty)
+                        set_datablock_bitmap(parent->data_blocks[i], 0);
+                    found_entry_to_remove = 1;
+                    break;
+                }
+
+            }
+        }
+    }
+    return 0;
+}
+
+// Tests
+
+void test_unlink() {
+    Dir_Create("/test_unlink");
+    Dir_Create("/test_unlink/path2");
+    Dir_Create("/test_unlink/path2/path3");
+    Dir_Create("/test_unlink/path1");
+    File_Create("/test_unlink/path1/1");
+    File_Create("/test_unlink/path1/2");
+    assert(Dir_Unlink("/test_unlink/path1/1") == -1);
+    assert(File_Unlink("/test_unlink/path1") == -1);
+    assert(Dir_Unlink("/test_unlink/path1") == -1);
+    assert(Dir_Unlink("/test_unlink/path2") == -1);
+    assert(Dir_Unlink("/test_unlink/path2/path3") == 0);
+    assert(Dir_Unlink("/test_unlink/path2") == 0);
+    assert(Dir_Unlink("/") == -1);
+    assert(File_Unlink("/test_unlink/path1/1") == 0);
+    assert(Dir_Unlink("/test_unlink/path1") == -1);
+    assert(File_Unlink("/test_unlink/path1/2") == 0);
+    assert(Dir_Unlink("/test_unlink/path1") == 0);
+}
+
+void test_single_sector() {
+    char test[] = "test";
+    write_to_single_sector(0, 10, test, 4);
+    read_from_single_sector(0, 11, test, 2);
+    assert(test[0] == 'e');
+    assert(test[1] == 's');
+}
+
+void test_read_write_seek() {
+    File_Create("/salam_test");
+    int fd = File_Open("/salam_test");
+    char str[] = "salam bar to";
+    File_Write(fd, str, sizeof(str));
+    File_Close(fd);
+    fd = File_Open("/salam_test");
+    char buff[15];
+    File_Read(fd, buff, 5);
+    buff[5] = '\0';
+    assert(strcmp(buff, "salam") == 0);
+    File_Seek(fd, 0);
+    File_Read(fd, buff, 5);
+    assert(strcmp(buff, "salam") == 0);
+    assert(File_Read(fd, buff, 100) == 8);
+    assert(strcmp(buff, " bar to") == 0);
+}
+
+void test_bitmap_inode() {
+    set_inode_bitmap(10, 1);
+    set_inode_bitmap(11, 1);
+    set_inode_bitmap(14, 0);
+    set_inode_bitmap(15, 1);
+    assert(get_inode_bitmap(10) == 1);
+    assert(get_inode_bitmap(11) == 1);
+    assert(get_inode_bitmap(14) == 0);
+    assert(get_inode_bitmap(15) == 1);
+}
+
+void test_bitmap_block() {
+    set_inode_bitmap(4564, 1);
+    set_inode_bitmap(4565, 1);
+    set_inode_bitmap(4566, 0);
+    set_inode_bitmap(4567, 1);
+    assert(get_inode_bitmap(4564) == 1);
+    assert(get_inode_bitmap(4565) == 1);
+    assert(get_inode_bitmap(4566) == 0);
+    assert(get_inode_bitmap(4567) == 1);
+}
+
+void test_file_folder_create() {//None of them should exists before
+    File_Unlink("/path");
+    File_Unlink("/path2/salam");
+    Dir_Unlink("/path2");
+    assert(File_Create("/path") == 0);
+    assert(File_Create("/path") == -1);
+    assert(File_Create("/path2/salam") == -1);
+    assert(Dir_Create("/path2") == 0);
+    assert(File_Create("/path2/salam") == 0);
+}
+
+void test_file_in_use() {
+    File_Create("/using");
+    int fd = File_Open("/using");
+    assert(File_Unlink("/using") == -1);
+    File_Close(fd);
+    assert(File_Unlink("/using") == 0);
+
+}
+
+void test_open_file() {
+    File_Create("/file1");
+    Dir_Create("/path2");
+    File_Create("/file3");
+    File_Create("/path2/1");
+    File_Create("/path2/2");
+    File_Create("/path2/3");
+    File_Create("/path2/4");
+    File_Create("/path2/5");
+    assert(File_Open("/file3") == 0);
+    assert(File_Open("/file3") == 1);
+    assert(File_Open("/file3") == 2);
+    File_Open("/file_dani");
+    File_Open("/path2");
+}
+
+void test_dir_count() {
+    Dir_Create("/test_dir_count");
+    File_Create("/test_dir_count/file1");
+    Dir_Create("/test_dir_count/path2");
+    File_Create("/test_dir_count/file3");
+    File_Create("/test_dir_count/path2/1");
+    File_Create("/test_dir_count/path2/2");
+    File_Create("/test_dir_count/path2/3");
+    File_Create("/test_dir_count/path2/4");
+    File_Create("/test_dir_count/path2/5");
+    char tmp5[1000];
+    assert(Dir_Read("/test_dir_count/", tmp5, 1000) == 3);
+    assert(Dir_Read("/test_dir_count/path2/", tmp5, 1000) == 5);
+}
+
+void test_all() {
+    test_file_folder_create();
+    test_bitmap_block();
+    test_single_sector();
+    test_bitmap_inode();
+    test_dir_count();
+    test_open_file();
+    test_read_write_seek();
+    test_unlink();
+    test_file_in_use();
+    fprintf(stderr, "All tests passed\n");
 }
