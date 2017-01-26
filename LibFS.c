@@ -5,10 +5,11 @@
 
 //TODO: check free before any return
 
+#define MAX_FILES  1000
+#define MAX_FDS 1000
 #define DATA_BLOCK_PER_INODE 30
 
 const int MAGIC_NUMBER = 241543903;
-const int MAX_FILES = 1000;
 const int INODE_BITMAP_SIZE = 125; // MAX_FILES / BITS_IN_A_SINGLE_BYTE(8)
 const int MAGIC_NUMBER_SIZE = 4;
 
@@ -204,8 +205,7 @@ void test_file_folder_create() {//None of them should exists before
     assert(File_Create(tmp2) == 0);
 }
 
-void test_dir_count()
-{
+void test_dir_count() {
     File_Create("/file1");
     Dir_Create("/path2");
     File_Create("/file3");
@@ -215,8 +215,8 @@ void test_dir_count()
     File_Create("/path2/4");
     File_Create("/path2/5");
     char tmp5[1000];
-    assert(Dir_Read("/", tmp5, 1000)==3);
-    assert(Dir_Read("/path2/", tmp5, 1000)==5);
+    assert(Dir_Read("/", tmp5, 1000) == 3);
+    assert(Dir_Read("/path2/", tmp5, 1000) == 5);
 }
 
 int get_new_block() {
@@ -249,7 +249,8 @@ int get_new_block() {
 int get_new_inode(struct inode **new_node) {
     //TODO:Optimize this by reading the sector once
     int i;
-    for (i = 0; i < MAX_FILES; i++) {
+    for (i = 0; i < MAX_FILES;
+         i++) {
         if (!get_inode_bitmap(i)) {
             set_inode_bitmap(i, 1);
             (*new_node) = calloc(1, sizeof(struct inode));
@@ -425,15 +426,24 @@ file_folder_create(char *file, enum INODE_TYPE type) {
     return 0;
 }
 
-//int last_fd;
+int last_fd;
+int open_file_count = 0;
 //int last_inode;
 //int last_datablocks;
-//struct file_descriptor{
-//    int inode_number;
-//    int pointer;
-//}[MAX_OPEN_FILES];
-//
-//int open_count[MAX_TOTAL_FILES];
+struct file_descriptor {
+    int inode_number;
+    int pointer;
+};
+struct file_descriptor file_descriptors[MAX_FDS];
+
+int get_new_fd() {
+    while (file_descriptors[last_fd].inode_number != 0) {
+        last_fd = (last_fd + 1) % MAX_FDS;
+    }
+    return last_fd;
+}
+
+int inode_open_count[MAX_FILES];
 //
 //inode read_inode(int i)
 //{
@@ -454,14 +464,58 @@ file_folder_create(char *file, enum INODE_TYPE type) {
 int
 File_Open(char *file) {
     printf("FS_Open\n");
+    if (open_file_count == MAX_FDS) {
+        osErrno = E_TOO_MANY_OPEN_FILES;
+        return -1;
+    }
+    int inode_number;
+    struct inode *node;
+    inode_number = find_last_parent(file, &node);
+    if (inode_number == -1)
+        return -1;
 
-    // follow the path
-    // find inode number
-    // assign file descriptor in ram and
-    // set pointer to beginning of file
-    // open_count ++;
-    // last_fd = (last_fd + 1) %MAX_OPEN_FILES;
-    return 0;
+
+    int end_pos = (int) strlen(file);
+    int start_pos = end_pos - 1; //Ignoring the first slash
+
+    while (file[start_pos] != '/')
+        start_pos--;
+    start_pos++;
+    if (start_pos == end_pos) {
+        fprintf(stderr, "This is a directory not a file\n");
+        osErrno = E_NO_SUCH_FILE;
+        return -1;
+    }
+    if (end_pos - start_pos >= 16) {
+        fprintf(stderr, "File is longer than 16 character\n");
+        osErrno = E_NO_SUCH_FILE;
+        return -1;
+    }
+    char tmp_path[16];
+    strncpy(tmp_path, &file[start_pos], end_pos - start_pos);
+    tmp_path[end_pos - start_pos] = '\0';
+    int i;
+    char *tmp = malloc(SECTOR_SIZE);
+    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
+    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
+        if (node->data_blocks[i] != 0) {
+            Disk_Read(node->data_blocks[i], tmp);
+            int j;
+            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
+                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
+                if (strcmp(tmp_file_record->name, tmp_path) == 0) {
+                    int fd = get_new_fd();
+                    file_descriptors[fd].inode_number = tmp_file_record->inode_number;
+                    file_descriptors[fd].pointer = 0;
+                    open_file_count++;
+                    inode_open_count[tmp_file_record->inode_number]++;
+                    return fd;
+                }
+            }
+        }
+    }
+    osErrno = E_NO_SUCH_FILE;
+    return -1;
 }
 
 
@@ -501,10 +555,14 @@ File_Seek(int fd, int offset) {
 int
 File_Close(int fd) {
     printf("FS_Close\n");
-    // error handling
-    //get the inode number
-    // open_count[inode_number] —;
-    // set the inode_number to 0
+    if (file_descriptors[fd].inode_number == 0) {
+        osErrno = E_BAD_FD;
+        return -1;
+    }
+    inode_open_count[file_descriptors[fd].inode_number]--;
+    open_file_count--;
+    file_descriptors[fd].inode_number = 0;
+    file_descriptors[fd].pointer = 0;
     return 0;
 }
 
