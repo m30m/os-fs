@@ -49,25 +49,6 @@ void write_to_single_sector(int sector, int offset, void *buffer, size_t size) {
     free(tmp);
 }
 
-
-char *image_path = NULL;
-
-int inode_number_to_sector_number(int inode_number) { return 1 + 3 + inode_number / 4; }
-
-int inode_number_to_sector_offset(int inode_number) { return (int) ((inode_number % 4) * sizeof(struct inode)); }
-
-void write_inode(int inode_number, struct inode *node) {
-    write_to_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
-                           node,
-                           sizeof(struct inode));
-}
-
-void read_inode(int inode_number, struct inode *node) {
-    read_from_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
-                            node,
-                            sizeof(struct inode));
-}
-
 void set_inode_bitmap(int inode_number, char value) {
     int byte_position = MAGIC_NUMBER_SIZE + inode_number / 8;
     int byte_offset = inode_number % 8;
@@ -86,33 +67,6 @@ char get_inode_bitmap(int inode_number) {
     char c;
     read_from_single_sector(0, byte_position, &c, 1);
     return (char) ((c >> byte_offset) & 1);
-}
-
-int get_new_block() {
-    char *tmp = malloc(SECTOR_SIZE);
-    int i;
-    for (i = 1; i < 4; i++) {
-        Disk_Read(i, tmp);
-        int j = 0;
-        if (i == 1)
-            j = 254 / 8 + 1; // First 254 sectors are metadata
-        for (; j < SECTOR_SIZE; j++) {
-            int k;
-            for (k = 0; k < 8; k++) {
-                if ((tmp[j] & (1 << k)) == 0) {
-                    tmp[j] |= (1 << k);
-                    Disk_Write(i, tmp);
-                    int sector_number = (i - 1) * SECTOR_SIZE * 8 + j * 8 + k;
-                    memset(tmp, 0, sizeof tmp);
-                    Disk_Write(sector_number, tmp);
-                    free(tmp);
-                    return sector_number;
-                }
-            }
-        }
-    }
-    free(tmp);
-    return -1;//No free blocks
 }
 
 void set_datablock_bitmap(int block_number, char value) {
@@ -137,52 +91,47 @@ char get_datablock_bitmap(int block_number) {
     return (char) ((c >> byte_offset) & 1);
 }
 
-void initialize_filesystem(char *path, int *magic_number) {
-    write_to_single_sector(0, 0, magic_number, 4);
-    struct inode *root = calloc(1, sizeof(struct inode));
-    root->size = 0;
-    root->type = DIR_TYPE;
-    set_inode_bitmap(0, 1);
-    free(root);
-    Disk_Save(path);
+int inode_number_to_sector_number(int inode_number) { return 1 + 3 + inode_number / 4; }
+
+int inode_number_to_sector_offset(int inode_number) { return (int) ((inode_number % 4) * sizeof(struct inode)); }
+
+void read_inode(int inode_number, struct inode *node) {
+    read_from_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
+                            node,
+                            sizeof(struct inode));
 }
 
-int
-FS_Boot(char *path) {
-    printf("FS_Boot %s\n", path);
+void write_inode(int inode_number, struct inode *node) {
+    write_to_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
+                           node,
+                           sizeof(struct inode));
+}
 
-    // oops, check for errors
-    if (Disk_Init() == -1) {
-        printf("Disk_Init() failed\n");
-        osErrno = E_GENERAL;
-        return -1;
-    }
-
-    int magic_number = MAGIC_NUMBER;
-    if (Disk_Load(path) == -1) {
-        if (diskErrno == E_OPENING_FILE) {
-            initialize_filesystem(path, &magic_number);
-            fprintf(stderr, "Filesystem didn't exist, creating new file\n");
-        }
-        else {
-            osErrno = E_GENERAL;
-            return -1;
-        }
-    }
-    else {
-        int tmp;
-        read_from_single_sector(0, 0, &tmp, 4);
-        if (tmp != magic_number) {
-            osErrno = E_GENERAL;
-            fprintf(stderr, "Magic number didn't match\n");
-            return -1;
+int get_new_block() {
+    char *tmp = malloc(SECTOR_SIZE);
+    int i;
+    for (i = 1; i < 4; i++) {
+        Disk_Read(i, tmp);
+        int j = 0;
+        if (i == 1)
+            j = 254 / 8 + 1; // First 254 sectors are metadata
+        for (; j < SECTOR_SIZE; j++) {
+            int k;
+            for (k = 0; k < 8; k++) {
+                if ((tmp[j] & (1 << k)) == 0) {
+                    tmp[j] |= (1 << k);
+                    Disk_Write(i, tmp);
+                    int sector_number = (i - 1) * SECTOR_SIZE * 8 + j * 8 + k;
+                    memset(tmp, 0, SECTOR_SIZE);
+                    Disk_Write(sector_number, tmp);
+                    free(tmp);
+                    return sector_number;
+                }
+            }
         }
     }
-
-
-    // do all of the other stuff needed...
-    image_path = path;
-    return 0;
+    free(tmp);
+    return -1;//No free blocks
 }
 
 int get_new_inode(struct inode **new_node) {
@@ -198,17 +147,6 @@ int get_new_inode(struct inode **new_node) {
     }
     return -1;
 }
-
-int
-FS_Sync() {
-    printf("FS_Sync\n");
-    if (Disk_Save(image_path) == -1) {
-        osErrno = E_GENERAL;
-        return -1;
-    }
-    return 0;
-}
-
 
 int find_last_parent(char *file, struct inode **new_node) {
     struct inode *parent = calloc(1, sizeof(struct inode));
@@ -289,11 +227,6 @@ int find_last_parent(char *file, struct inode **new_node) {
             }
         }
     }
-}
-
-int
-File_Create(char *file) {
-    return file_folder_create(file, FILE_TYPE);
 }
 
 int
@@ -386,8 +319,6 @@ file_folder_create(char *file, enum INODE_TYPE type) {
 
 int last_fd;
 int open_file_count = 0;
-//int last_inode;
-//int last_datablocks;
 struct file_descriptor {
     int inode_number;
     int pointer;
@@ -402,22 +333,121 @@ int get_new_fd() {
 }
 
 int inode_open_count[MAX_FILES];
-//
-//inode read_inode(int i)
-//{
-//    calculate position
-//    MAGIC_NUMBER_SIZE+inode_BITMAP+DATA_BITMAP+i*inode_SIZE
-//    disk_read(folan_sector,);
-//}
-//
-//inode_number follow_the_path(char* path)
-//{
-//    // follow the path
-//    // start from inode number 0 which is ‘/‘
-//    // iterate through the fucking inodes
-//    //
-//}
 
+char *image_path = NULL;
+
+void initialize_filesystem(char *path, int *magic_number) {
+    write_to_single_sector(0, 0, magic_number, 4);
+    struct inode *root = calloc(1, sizeof(struct inode));
+    root->size = 0;
+    root->type = DIR_TYPE;
+    set_inode_bitmap(0, 1);
+    free(root);
+    Disk_Save(path);
+}
+
+int find_inode(char *file, struct inode **node) {
+    struct inode *parent;
+    int parent_inode_number = 0;
+    parent_inode_number = find_last_parent(file, &parent);
+    if (parent_inode_number == -1) {
+        fprintf(stderr, "Folder does not exists\n");
+        return -1;
+    }
+
+    int end_pos = (int) strlen(file);
+    int start_pos = end_pos - 1; //Ignoring the first slash
+
+    while (file[start_pos] != '/')
+        start_pos--;
+    start_pos++;
+    if (end_pos - start_pos >= 16) {
+        fprintf(stderr, "File is longer than 16 character\n");
+        free(parent);
+        return -1;
+    }
+    char tmp_path[16];
+    strncpy(tmp_path, &file[start_pos], end_pos - start_pos);
+    tmp_path[end_pos - start_pos] = '\0';
+    int i;
+    char *tmp = malloc(SECTOR_SIZE);
+    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
+    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
+        if (parent->data_blocks[i] != 0) {
+            Disk_Read(parent->data_blocks[i], tmp);
+            int j;
+            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
+                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
+                if (strcmp(tmp_file_record->name, tmp_path) == 0) {
+                    struct inode *new_node = calloc(1, sizeof(struct inode));
+                    read_inode(tmp_file_record->inode_number, new_node);
+                    (*node) = new_node;
+                    free(parent);
+                    free(tmp);
+                    free(tmp_file_record);
+                    return tmp_file_record->inode_number;
+                }
+            }
+        }
+    }
+    free(parent);
+    free(tmp);
+    free(tmp_file_record);
+    return -1;
+}
+
+int
+FS_Boot(char *path) {
+    printf("FS_Boot %s\n", path);
+
+    // oops, check for errors
+    if (Disk_Init() == -1) {
+        printf("Disk_Init() failed\n");
+        osErrno = E_GENERAL;
+        return -1;
+    }
+
+    int magic_number = MAGIC_NUMBER;
+    if (Disk_Load(path) == -1) {
+        if (diskErrno == E_OPENING_FILE) {
+            initialize_filesystem(path, &magic_number);
+            fprintf(stderr, "Filesystem didn't exist, creating new file\n");
+        }
+        else {
+            osErrno = E_GENERAL;
+            return -1;
+        }
+    }
+    else {
+        int tmp;
+        read_from_single_sector(0, 0, &tmp, 4);
+        if (tmp != magic_number) {
+            osErrno = E_GENERAL;
+            fprintf(stderr, "Magic number didn't match\n");
+            return -1;
+        }
+    }
+
+
+    // do all of the other stuff needed...
+    image_path = path;
+    return 0;
+}
+
+int
+FS_Sync() {
+    printf("FS_Sync\n");
+    if (Disk_Save(image_path) == -1) {
+        osErrno = E_GENERAL;
+        return -1;
+    }
+    return 0;
+}
+
+int
+File_Create(char *file) {
+    return file_folder_create(file, FILE_TYPE);
+}
 
 int
 File_Open(char *file) {
@@ -613,6 +643,7 @@ File_Close(int fd) {
     return 0;
 }
 
+//Dir Ops
 
 int
 Dir_Create(char *path) {
@@ -696,55 +727,7 @@ Dir_Read(char *path, void *buffer, int size) {
 }
 
 
-int find_inode(char *file, struct inode **node) {
-    struct inode *parent;
-    int parent_inode_number = 0;
-    parent_inode_number = find_last_parent(file, &parent);
-    if (parent_inode_number == -1) {
-        fprintf(stderr, "Folder does not exists\n");
-        return -1;
-    }
 
-    int end_pos = (int) strlen(file);
-    int start_pos = end_pos - 1; //Ignoring the first slash
-
-    while (file[start_pos] != '/')
-        start_pos--;
-    start_pos++;
-    if (end_pos - start_pos >= 16) {
-        fprintf(stderr, "File is longer than 16 character\n");
-        free(parent);
-        return -1;
-    }
-    char tmp_path[16];
-    strncpy(tmp_path, &file[start_pos], end_pos - start_pos);
-    tmp_path[end_pos - start_pos] = '\0';
-    int i;
-    char *tmp = malloc(SECTOR_SIZE);
-    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
-    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
-        if (parent->data_blocks[i] != 0) {
-            Disk_Read(parent->data_blocks[i], tmp);
-            int j;
-            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
-                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
-                if (strcmp(tmp_file_record->name, tmp_path) == 0) {
-                    struct inode *new_node = calloc(1, sizeof(struct inode));
-                    read_inode(tmp_file_record->inode_number, new_node);
-                    (*node) = new_node;
-                    free(parent);
-                    free(tmp);
-                    free(tmp_file_record);
-                    return tmp_file_record->inode_number;
-                }
-            }
-        }
-    }
-    free(parent);
-    free(tmp);
-    free(tmp_file_record);
-    return -1;
-}
 
 int
 Dir_Unlink(char *path) {
