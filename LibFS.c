@@ -428,8 +428,6 @@ FS_Boot(char *path) {
         }
     }
 
-
-    // do all of the other stuff needed...
     image_path = path;
     return 0;
 }
@@ -453,74 +451,32 @@ int
 File_Open(char *file) {
     printf("FS_Open\n");
     if (open_file_count == MAX_FDS) {
+        fprintf(stderr, "Too many open fils\n");
         osErrno = E_TOO_MANY_OPEN_FILES;
         return -1;
     }
     int inode_number;
     struct inode *node;
-    inode_number = find_last_parent(file, &node);
+    inode_number = find_inode(file, &node);
     if (inode_number == -1)
+    {
+        fprintf(stderr, "No such file to open\n");
+        osErrno=E_NO_SUCH_FILE;
         return -1;
-
-
-    int end_pos = (int) strlen(file);
-    int start_pos = end_pos - 1; //Ignoring the first slash
-
-    while (file[start_pos] != '/')
-        start_pos--;
-    start_pos++;
-    if (start_pos == end_pos) {
-        fprintf(stderr, "This is a directory not a file\n");
+    }
+    if (node->type == DIR_TYPE) {
+        fprintf(stderr, "Can't open dir\n");
         osErrno = E_NO_SUCH_FILE;
+        free(node);
         return -1;
     }
-    if (end_pos - start_pos >= 16) {
-        fprintf(stderr, "File is longer than 16 character\n");
-        osErrno = E_NO_SUCH_FILE;
-        return -1;
-    }
-    char tmp_path[16];
-    strncpy(tmp_path, &file[start_pos], end_pos - start_pos);
-    tmp_path[end_pos - start_pos] = '\0';
-    int i;
-    char *tmp = malloc(SECTOR_SIZE);
-    struct file_record *tmp_file_record = malloc(sizeof(struct file_record));
-    for (i = 0; i < DATA_BLOCK_PER_INODE; i++) {
-        if (node->data_blocks[i] != 0) {
-            Disk_Read(node->data_blocks[i], tmp);
-            int j;
-            for (j = 0; j < SECTOR_SIZE / sizeof(struct file_record); j++) {
-                memcpy(tmp_file_record, &tmp[j * sizeof(struct file_record)], sizeof(struct file_record));
-                if (strcmp(tmp_file_record->name, tmp_path) == 0) {
-
-                    struct inode *tmp_inode = calloc(1, sizeof(struct inode));
-                    read_inode(tmp_file_record->inode_number, tmp_inode);
-                    if (tmp_inode->type == DIR_TYPE) {
-                        fprintf(stderr, "Can't open dir\n");
-                        osErrno = E_NO_SUCH_FILE;
-                        free(tmp);
-                        free(tmp_file_record);
-                        return -1;
-                    }
-                    int fd = get_new_fd();
-                    file_descriptors[fd].inode_number = tmp_file_record->inode_number;
-                    file_descriptors[fd].pointer = 0;
-                    open_file_count++;
-                    inode_open_count[tmp_file_record->inode_number]++;
-                    free(tmp);
-                    free(tmp_file_record);
-                    return fd;
-                }
-            }
-        }
-    }
-    fprintf(stderr, "No such file to open\n");
-    osErrno = E_NO_SUCH_FILE;
-    free(tmp);
-    free(tmp_file_record);
-    return -1;
+    int fd = get_new_fd();
+    file_descriptors[fd].inode_number = inode_number;
+    file_descriptors[fd].pointer = 0;
+    open_file_count++;
+    inode_open_count[inode_number]++;
+    return fd;
 }
-
 
 int
 File_Read(int fd_num, void *buffer, int size) {
@@ -726,9 +682,6 @@ Dir_Read(char *path, void *buffer, int size) {
     return entry_count;
 }
 
-
-
-
 int
 Dir_Unlink(char *path) {
     printf("Dir_Unlink\n");
@@ -812,7 +765,6 @@ Dir_Unlink(char *path) {
     free(tmp_file_record);
     return 0;
 }
-
 
 int
 File_Unlink(char *path) {
