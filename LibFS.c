@@ -35,6 +35,9 @@ struct file_record {
 };
 
 void read_from_single_sector(int sector, int offset, void *buffer, size_t size) {
+    /*
+     * Util function to read only a part of sector
+     */
     char *tmp = malloc(SECTOR_SIZE);
     Disk_Read(sector, tmp);
     memcpy(buffer, &tmp[offset], size);
@@ -42,6 +45,10 @@ void read_from_single_sector(int sector, int offset, void *buffer, size_t size) 
 }
 
 void write_to_single_sector(int sector, int offset, void *buffer, size_t size) {
+    /*
+     * Util function to write only a part of sector
+     * First the sector is read completely, then the changes are applied and then written back to hard
+     */
     char *tmp = malloc(SECTOR_SIZE);
     Disk_Read(sector, tmp);
     memcpy(&tmp[offset], buffer, size);
@@ -96,18 +103,27 @@ int inode_number_to_sector_number(int inode_number) { return 1 + 3 + inode_numbe
 int inode_number_to_sector_offset(int inode_number) { return (int) ((inode_number % 4) * sizeof(struct inode)); }
 
 void read_inode(int inode_number, struct inode *node) {
+    /*
+     * Reads the inode with number `inode_number` from hard and stores it in `node`
+     */
     read_from_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
                             node,
                             sizeof(struct inode));
 }
 
 void write_inode(int inode_number, struct inode *node) {
+    /*
+     * Write the inode with number `inode_number` to hard using `node` variable
+     */
     write_to_single_sector(inode_number_to_sector_number(inode_number), inode_number_to_sector_offset(inode_number),
                            node,
                            sizeof(struct inode));
 }
 
 int get_new_block() {
+    /*
+     * Searches through the bitmap and assign the first empty block number
+     */
     char *tmp = malloc(SECTOR_SIZE);
     int i;
     for (i = 1; i < 4; i++) {
@@ -135,6 +151,9 @@ int get_new_block() {
 }
 
 int get_new_inode(struct inode **new_node) {
+    /*
+     * Searches through the bitmap and assign the first empty inode number
+     */
     //TODO:Optimize this by reading the sector once
     int i;
     for (i = 0; i < MAX_FILES; i++) {
@@ -149,6 +168,12 @@ int get_new_inode(struct inode **new_node) {
 }
 
 int find_last_parent(char *file, struct inode **new_node) {
+    /*
+     * Finds the inode of the last parent, returns the inode number and store the inode in `new_node` variable
+     * /path/path2/path3/file
+     *              ^
+     *        inode returned
+     */
     struct inode *parent = calloc(1, sizeof(struct inode));
     int parent_inode_number = 0;
     read_inode(parent_inode_number, parent);
@@ -326,6 +351,9 @@ struct file_descriptor {
 struct file_descriptor file_descriptors[MAX_FDS];
 
 int get_new_fd() {
+    /*
+     * Returns the first empty file descriptor, performance is increased using the `last_fd` variable
+     */
     while (file_descriptors[last_fd].inode_number != 0) {
         last_fd = (last_fd + 1) % MAX_FDS;
     }
@@ -334,7 +362,7 @@ int get_new_fd() {
 
 int inode_open_count[MAX_FILES];
 
-char *image_path = NULL;
+char *image_path = NULL; //Used for `FS_Sync`
 
 void initialize_filesystem(char *path, int *magic_number) {
     write_to_single_sector(0, 0, magic_number, 4);
@@ -347,6 +375,12 @@ void initialize_filesystem(char *path, int *magic_number) {
 }
 
 int find_inode(char *file, struct inode **node) {
+    /*
+     * Finds the inode of file, returns the inode number and store the inode in `node` variable
+     * /path/path2/path3/file
+     *                    ^
+     *              inode returned
+     */
     struct inode *parent;
     int parent_inode_number = 0;
     parent_inode_number = find_last_parent(file, &parent);
