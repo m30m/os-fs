@@ -564,8 +564,8 @@ File_Write(int fd_num, void *buffer, int size) {
     int write_done = 0;
     while (write_left > 0) {
         if (block_number == DATA_BLOCK_PER_INODE) {
-            fprintf(stderr, "No more blocks left in inode\n");
-            osErrno = E_NO_SPACE;
+            fprintf(stderr, "No more blocks left in inode, file is too big!\n");
+            osErrno = E_FILE_TOO_BIG;
             free(node);
             return -1;
         }
